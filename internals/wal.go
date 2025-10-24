@@ -1,6 +1,9 @@
 package internals
 
 import (
+	"encoding/json"
+	"engine/internals"
+
 	"fmt"
 	"os"
 )
@@ -14,14 +17,35 @@ type ReaderInterface interface {
 }
 
 type LogManager struct {
-	file       *os.File
-	msg        chan string
-	fileNumber int
+	file         *os.File
+	msg          chan internals.LogAppend
+	fileNumber   int
+	ManifestPath string
+}
+type Manifest struct {
+	File string `json:"file"`
+	Seq  int    `json:"seq"`
 }
 
-func (m *LogManager) StartLog(com chan string, fileName string, fileNumber int) {
+func readManifest(path string) (string, int) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Println(err)
+	}
+	var fileData Manifest
+	if err = json.Unmarshal(file, &fileData); err != nil {
+		fmt.Println(err)
+	}
+	return fileData.File, fileData.Seq
+}
+
+func writeManifest(path string, currFile Manifest) {
+	//  to write
+}
+func (m *LogManager) StartLog(com chan string, manPath string) {
 	m.msg = com
-	m.fileNumber = fileNumber
+	var fileName string
+	fileName, m.fileNumber = readManifest(manPath)
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	m.file = file
 
@@ -30,6 +54,7 @@ func (m *LogManager) StartLog(com chan string, fileName string, fileNumber int) 
 	}
 	for msg := range com {
 		// remaining code
+
 		fileInfo, err := os.Stat(fileName)
 		if err != nil {
 			fmt.Println(err)
@@ -40,6 +65,15 @@ func (m *LogManager) StartLog(com chan string, fileName string, fileNumber int) 
 			}
 			m.file.Close()
 			m.file = nil
+			m.fileNumber++
+			fileName = fmt.Sprintf("%d.log", m.fileNumber)
+			file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Println(err)
+			}
+			m.file = file
+			updateManifest := Manifest{fileName, m.fileNumber}
+			writeManifest(m.ManifestPath, updateManifest)
 		}
 
 	}
