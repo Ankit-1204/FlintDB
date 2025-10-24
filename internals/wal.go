@@ -3,7 +3,6 @@ package internals
 import (
 	"encoding/json"
 	"engine/internals"
-
 	"fmt"
 	"os"
 )
