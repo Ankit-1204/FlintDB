@@ -1,8 +1,10 @@
 package internals
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
-	"engine/internals"
 	"fmt"
 	"os"
 )
@@ -17,7 +19,7 @@ type ReaderInterface interface {
 
 type LogManager struct {
 	file         *os.File
-	msg          chan internals.LogAppend
+	msg          chan LogAppend
 	fileNumber   int
 	ManifestPath string
 }
@@ -41,19 +43,28 @@ func readManifest(path string) (string, int) {
 func writeManifest(path string, currFile Manifest) {
 	//  to write
 }
-func (m *LogManager) StartLog(com chan string, manPath string) {
+func (m *LogManager) StartLog(com chan LogAppend, manPath string) {
 	m.msg = com
 	var fileName string
 	fileName, m.fileNumber = readManifest(manPath)
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	m.file = file
+	writer := bufio.NewWriter(m.file)
 
 	if err != nil {
 		fmt.Println(err)
 	}
 	for msg := range com {
-		// remaining code
 
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.key)))
+		buf.Write([]byte(msg.key))
+		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.payload)))
+		buf.Write([]byte(msg.payload))
+		buf.Write([]byte(msg.operation))
+
+		record := buf.Bytes()
+		writer.Write(record)
 		fileInfo, err := os.Stat(fileName)
 		if err != nil {
 			fmt.Println(err)
