@@ -1,10 +1,11 @@
-package internals
+package wal
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"engine/internals/formats"
 	"fmt"
 	"os"
 )
@@ -19,7 +20,7 @@ type ReaderInterface interface {
 
 type LogManager struct {
 	file         *os.File
-	msg          chan LogAppend
+	msg          chan formats.LogAppend
 	fileNumber   int
 	ManifestPath string
 }
@@ -43,7 +44,7 @@ func readManifest(path string) (string, int) {
 func writeManifest(path string, currFile Manifest) {
 	//  to write
 }
-func (m *LogManager) StartLog(com chan LogAppend, manPath string) {
+func (m *LogManager) StartLog(com chan formats.LogAppend, manPath string) {
 	m.msg = com
 	var fileName string
 	fileName, m.fileNumber = readManifest(manPath)
@@ -57,11 +58,11 @@ func (m *LogManager) StartLog(com chan LogAppend, manPath string) {
 	for msg := range com {
 
 		var buf bytes.Buffer
-		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.key)))
-		buf.Write([]byte(msg.key))
-		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.payload)))
-		buf.Write([]byte(msg.payload))
-		buf.Write([]byte(msg.operation))
+		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.Key)))
+		buf.Write([]byte(msg.Key))
+		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.Payload)))
+		buf.Write([]byte(msg.Payload))
+		buf.Write([]byte(msg.Operation))
 
 		record := buf.Bytes()
 		writer.Write(record)
