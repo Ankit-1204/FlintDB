@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"engine/internals/formats"
 	"fmt"
 	"io"
 	"os"
 	"sync"
+
+	"github.com/Ankit-1204/FlintDB.git/internals/formats"
 )
 
 type WriterInterface interface {
@@ -124,7 +125,7 @@ func (m *LogManager) Replay() []formats.LogAppend {
 			var keylen uint32
 			var loadlen uint32
 			// binary.read works only for fixed slice value/slice
-			if err = binary.Read(reader, binary.LittleEndian, keylen); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &keylen); err != nil {
 				break
 			}
 			key := make([]byte, keylen)
@@ -132,7 +133,7 @@ func (m *LogManager) Replay() []formats.LogAppend {
 				break
 			}
 			// ReadFull only reads uptill the length of the buffer provided
-			if err = binary.Read(reader, binary.LittleEndian, loadlen); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &loadlen); err != nil {
 				break
 			}
 			payload := make([]byte, loadlen)
