@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/Ankit-1204/FlintDB.git/internals/formats"
+	"github.com/google/uuid"
 )
 
 type WriterInterface interface {
@@ -39,15 +40,41 @@ func readManifest(path string) Manifest {
 		fmt.Println(err)
 	}
 	decoder := json.NewDecoder(file)
-	var fileData Manifest
+	fileData := Manifest{make([]string, 0), 0}
 	err = decoder.Decode(&fileData)
-
+	if err != nil {
+		fmt.Println(err)
+	}
 	return fileData
 
 }
 
-func writeManifest(path string, currFile Manifest) {
+func writeManifest(path string, currFile Manifest) error {
 	//  to write
+	randName := uuid.NewString()
+	tempfile, err := os.Create(randName)
+	if err != nil {
+		return err
+	}
+	defer tempfile.Close()
+
+	writer := bufio.NewWriter(tempfile)
+	encoder := json.NewEncoder(writer)
+	if err = encoder.Encode(currFile); err != nil {
+		fmt.Println(err)
+		return err
+	}
+	writer.Flush()
+	tempfile.Sync()
+	if err = tempfile.Close(); err != nil {
+		fmt.Println(err)
+		return err
+	}
+	if err = os.Rename(tempfile.Name(), path); err != nil {
+		fmt.Println(err)
+		return err
+	}
+	return nil
 }
 func (m *LogManager) StartLog(com chan formats.LogAppend) error {
 	m.msg = com
@@ -55,7 +82,14 @@ func (m *LogManager) StartLog(com chan formats.LogAppend) error {
 	m.ManifestPath = "internals/wal/manifest.json"
 	var fileName string
 	m.ManifestState = readManifest(m.ManifestPath)
-	fileName = m.ManifestState.File[len(m.ManifestState.File)-1]
+	if len(m.ManifestState.File) > 0 {
+		fileName = m.ManifestState.File[len(m.ManifestState.File)-1]
+	} else {
+		fileName = fmt.Sprintf("%d.log", m.ManifestState.Seq)
+		m.ManifestState.File = append(m.ManifestState.File, fileName)
+		writeManifest(m.ManifestPath, m.ManifestState)
+	}
+
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	m.file = file
 	writer := bufio.NewWriter(m.file)
