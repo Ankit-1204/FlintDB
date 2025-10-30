@@ -151,6 +151,7 @@ func fixInsert(tree *MemTable, newNode *Node) {
 func (mem *MemTable) Insert(key string, value []byte) {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
+
 	if mem.root.key == "" {
 		mem.root.key = key
 		mem.root.value = make([]byte, len(value))
