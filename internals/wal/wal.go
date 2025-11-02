@@ -23,8 +23,9 @@ type ReaderInterface interface {
 }
 
 type LogManager struct {
+	dbName        string
 	File          *os.File
-	Msg           chan formats.LogAppend
+	Msg           chan *formats.LogAppend
 	ManifestPath  string
 	ManifestState Manifest
 	lock          sync.Mutex
@@ -35,7 +36,8 @@ type Manifest struct {
 }
 
 func readManifest(path string) Manifest {
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -76,9 +78,12 @@ func writeManifest(path string, currFile Manifest) error {
 	}
 	return nil
 }
-func (m *LogManager) StartLog() error {
+func StartLog(appChannel chan *formats.LogAppend, dbName string) error {
+	m := LogManager{}
+	m.Msg = appChannel
+	m.dbName = dbName
 	m.ManifestState = Manifest{make([]string, 0), 0}
-	m.ManifestPath = "internals/wal/manifest.json"
+	m.ManifestPath = fmt.Sprintf(m.dbName, "/manifest.json")
 	var fileName string
 	m.ManifestState = readManifest(m.ManifestPath)
 	if len(m.ManifestState.File) > 0 {

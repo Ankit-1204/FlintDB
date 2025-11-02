@@ -148,7 +148,7 @@ func fixInsert(tree *MemTable, newNode *Node) {
 	}
 }
 
-func (mem *MemTable) Insert(key string, value []byte) {
+func (mem *MemTable) Insert(key string, value []byte) error {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
@@ -157,12 +157,12 @@ func (mem *MemTable) Insert(key string, value []byte) {
 		mem.root.value = make([]byte, len(value))
 		copy(mem.root.value, value)
 		mem.root.color = BLACK
-		return
+		return nil
 	} else {
 		var inserted *Node
 		_, inserted = addNode(mem.root, nil, key, value)
 		fixInsert(mem, inserted)
-		return
+		return nil
 	}
 
 }
