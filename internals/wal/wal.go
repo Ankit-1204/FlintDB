@@ -116,14 +116,15 @@ func StartLog(appChannel chan *formats.LogAppend, dbName string) error {
 		writer.Write(record)
 		if err := writer.Flush(); err != nil {
 			fmt.Println(err)
-			return err
+			msg.Done <- err
 		}
 		m.File.Sync()
 		fileInfo, err := os.Stat(fileName)
 		if err != nil {
 			fmt.Println(err)
-			return err
+			msg.Done <- err
 		}
+		msg.Done <- nil
 		if size := fileInfo.Size(); size >= 32000 {
 			if err := m.File.Sync(); err != nil {
 				fmt.Println(err)
