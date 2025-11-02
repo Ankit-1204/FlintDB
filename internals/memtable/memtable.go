@@ -166,3 +166,22 @@ func (mem *MemTable) Insert(key string, value []byte) {
 	}
 
 }
+func find(root *Node, key string) []byte {
+	if root.key == key {
+		rval := make([]byte, len(root.value))
+		copy(rval, root.value)
+		return rval
+	}
+	if root.key > key {
+		return find(root.left, key)
+	} else {
+		return find(root.right, key)
+	}
+}
+
+func (mem *MemTable) Search(key string) []byte {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+	return find(mem.root, key)
+
+}

@@ -23,8 +23,8 @@ type ReaderInterface interface {
 }
 
 type LogManager struct {
-	file          *os.File
-	msg           chan formats.LogAppend
+	File          *os.File
+	Msg           chan formats.LogAppend
 	ManifestPath  string
 	ManifestState Manifest
 	lock          sync.Mutex
@@ -76,8 +76,7 @@ func writeManifest(path string, currFile Manifest) error {
 	}
 	return nil
 }
-func (m *LogManager) StartLog(com chan formats.LogAppend) error {
-	m.msg = com
+func (m *LogManager) StartLog() error {
 	m.ManifestState = Manifest{make([]string, 0), 0}
 	m.ManifestPath = "internals/wal/manifest.json"
 	var fileName string
@@ -91,14 +90,14 @@ func (m *LogManager) StartLog(com chan formats.LogAppend) error {
 	}
 
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	m.file = file
-	writer := bufio.NewWriter(m.file)
+	m.File = file
+	writer := bufio.NewWriter(m.File)
 
 	if err != nil {
 		fmt.Println(err)
 		return err
 	}
-	for msg := range com {
+	for msg := range m.Msg {
 		var buf bytes.Buffer
 		// uint32 wshould mean 4bytes
 		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.Key)))
@@ -114,19 +113,19 @@ func (m *LogManager) StartLog(com chan formats.LogAppend) error {
 			fmt.Println(err)
 			return err
 		}
-		m.file.Sync()
+		m.File.Sync()
 		fileInfo, err := os.Stat(fileName)
 		if err != nil {
 			fmt.Println(err)
 			return err
 		}
 		if size := fileInfo.Size(); size >= 32000 {
-			if err := m.file.Sync(); err != nil {
+			if err := m.File.Sync(); err != nil {
 				fmt.Println(err)
 				return err
 			}
-			m.file.Close()
-			m.file = nil
+			m.File.Close()
+			m.File = nil
 			m.ManifestState.Seq++
 			fileName = fmt.Sprintf("%d.log", m.ManifestState.Seq)
 			file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -134,9 +133,9 @@ func (m *LogManager) StartLog(com chan formats.LogAppend) error {
 				fmt.Println(err)
 				return err
 			}
-			m.file = file
+			m.File = file
 			m.ManifestState.File = append(m.ManifestState.File, fileName)
-			writer = bufio.NewWriter(m.file)
+			writer = bufio.NewWriter(m.File)
 			writeManifest(m.ManifestPath, m.ManifestState)
 		}
 
