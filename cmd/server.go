@@ -33,7 +33,7 @@ func main() {
 				key   string
 				value string
 			)
-			fmt.Scan(&key, value)
+			fmt.Scan(&key, &value)
 			valu := []byte(value)
 			err := db.Put(key, valu)
 			if err != nil {
