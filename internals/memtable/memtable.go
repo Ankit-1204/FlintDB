@@ -167,6 +167,9 @@ func (mem *MemTable) Insert(key string, value []byte) error {
 
 }
 func find(root *Node, key string) []byte {
+	if root.left == nil && root.right == nil {
+		return nil
+	}
 	if root.key == key {
 		rval := make([]byte, len(root.value))
 		copy(rval, root.value)

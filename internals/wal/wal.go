@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/Ankit-1204/FlintDB.git/internals/formats"
@@ -36,11 +37,11 @@ type Manifest struct {
 }
 
 func readManifest(path string) Manifest {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
+	defer file.Close()
 	decoder := json.NewDecoder(file)
 	fileData := Manifest{make([]string, 0), 0}
 	err = decoder.Decode(&fileData)
@@ -51,9 +52,10 @@ func readManifest(path string) Manifest {
 
 }
 
-func writeManifest(path string, currFile Manifest) error {
+func writeManifest(dbname string, path string, currFile Manifest) error {
 	//  to write
 	randName := uuid.NewString()
+	randName = filepath.Join(dbname, randName)
 	tempfile, err := os.Create(randName)
 	if err != nil {
 		return err
@@ -78,22 +80,23 @@ func writeManifest(path string, currFile Manifest) error {
 	}
 	return nil
 }
-func StartLog(appChannel chan *formats.LogAppend, dbName string) error {
+func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogAppend, dbName string) error {
 	m := LogManager{}
 	m.Msg = appChannel
 	m.dbName = dbName
 	m.ManifestState = Manifest{make([]string, 0), 0}
-	m.ManifestPath = fmt.Sprintf(m.dbName, "/manifest.json")
+	m.ManifestPath = filepath.Join(m.dbName, "manifest.json")
 	var fileName string
 	m.ManifestState = readManifest(m.ManifestPath)
 	if len(m.ManifestState.File) > 0 {
 		fileName = m.ManifestState.File[len(m.ManifestState.File)-1]
 	} else {
 		fileName = fmt.Sprintf("%d.log", m.ManifestState.Seq)
+		fileName = filepath.Join(m.dbName, fileName)
 		m.ManifestState.File = append(m.ManifestState.File, fileName)
-		writeManifest(m.ManifestPath, m.ManifestState)
+		writeManifest(m.dbName, m.ManifestPath, m.ManifestState)
 	}
-
+	replayChan <- m.Replay()
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	m.File = file
 	writer := bufio.NewWriter(m.File)
@@ -134,6 +137,7 @@ func StartLog(appChannel chan *formats.LogAppend, dbName string) error {
 			m.File = nil
 			m.ManifestState.Seq++
 			fileName = fmt.Sprintf("%d.log", m.ManifestState.Seq)
+			fileName = filepath.Join(m.dbName, fileName)
 			file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				fmt.Println(err)
@@ -142,7 +146,7 @@ func StartLog(appChannel chan *formats.LogAppend, dbName string) error {
 			m.File = file
 			m.ManifestState.File = append(m.ManifestState.File, fileName)
 			writer = bufio.NewWriter(m.File)
-			writeManifest(m.ManifestPath, m.ManifestState)
+			writeManifest(m.dbName, m.ManifestPath, m.ManifestState)
 		}
 
 	}
