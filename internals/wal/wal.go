@@ -96,7 +96,6 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 		m.ManifestState.File = append(m.ManifestState.File, fileName)
 		writeManifest(m.dbName, m.ManifestPath, m.ManifestState)
 	}
-	replayChan <- m.Replay()
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	m.File = file
 	writer := bufio.NewWriter(m.File)
@@ -105,6 +104,8 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 		fmt.Println(err)
 		return err
 	}
+	records := m.Replay()
+	replayChan <- records
 	for msg := range m.Msg {
 		var buf bytes.Buffer
 		// uint32 wshould mean 4bytes
@@ -128,7 +129,7 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 			msg.Done <- err
 		}
 		msg.Done <- nil
-		if size := fileInfo.Size(); size >= 32000 {
+		if size := fileInfo.Size(); size >= 3200 {
 			if err := m.File.Sync(); err != nil {
 				fmt.Println(err)
 				return err
@@ -158,7 +159,7 @@ func (m *LogManager) Replay() []formats.LogAppend {
 	fileArray := readManifest(m.ManifestPath)
 	records := make([]formats.LogAppend, 0)
 	for _, entry := range fileArray.File {
-		f, err := os.Open(entry)
+		f, err := os.OpenFile(entry, os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Println(err)
 			return nil
@@ -188,7 +189,7 @@ func (m *LogManager) Replay() []formats.LogAppend {
 				break
 			}
 
-			newRecord := formats.LogAppend{Key: string(key), Payload: payload, Operation: string(operation)}
+			newRecord := formats.LogAppend{Key: string(key), Payload: payload, Operation: string(operation), Done: nil}
 			records = append(records, newRecord)
 		}
 		f.Close()

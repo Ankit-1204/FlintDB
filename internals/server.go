@@ -32,16 +32,28 @@ func Open(dbName string) (*Database, error) {
 	table := memtable.Start()
 	appChannel := make(chan *formats.LogAppend, 10)
 	replayChan := make(chan []formats.LogAppend)
+	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan}
 	go wal.StartLog(appChannel, replayChan, dbName)
-
-	db := Database{dbName: dbName, table: table, wal: appChannel}
+	db.replayCreate()
 	return &db, nil
 
 }
-func (db *Database) replayCreate() {
+func (db *Database) replayCreate() error {
 	msg := <-db.replayChan
-	fmt.Println(msg)
-
+	if len(msg) > 0 {
+		for _, entry := range msg {
+			switch entry.Operation {
+			case "P":
+				err := db.table.Insert(entry.Key, entry.Payload)
+				if err != nil {
+					return err
+				}
+			case "G":
+				continue
+			}
+		}
+	}
+	return nil
 }
 
 func (db *Database) Get(key string) []byte {
