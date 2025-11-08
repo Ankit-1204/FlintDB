@@ -1,6 +1,10 @@
 package memtable
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/Ankit-1204/FlintDB.git/internals/formats"
+)
 
 type Node struct {
 	value  []byte
@@ -72,9 +76,12 @@ func rightRotate(tree *MemTable, x *Node) {
 func leafNode(parent *Node) *Node {
 	return &Node{make([]byte, 0), "", parent, nil, nil, BLACK}
 }
+func isLeaf(n *Node) bool {
+	return (n.left == nil && n.right == nil)
+}
 
 func addNode(root *Node, parent *Node, key string, value []byte) (*Node, *Node) {
-	if root.left == nil && root.right == nil {
+	if isLeaf(root) {
 		root.key = key
 		newVal := make([]byte, len(value))
 		copy(newVal, value)
@@ -187,4 +194,37 @@ func (mem *MemTable) Search(key string) []byte {
 	defer mem.mu.Unlock()
 	return find(mem.root, key)
 
+}
+
+func (mem *MemTable) InOrderSlice() []formats.DataBlock {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	if isLeaf(mem.root) {
+		return nil
+	}
+
+	out := make([]formats.DataBlock, 0)
+	stack := []*Node{}
+	cur := mem.root
+
+	for cur != nil || len(stack) > 0 {
+		for cur != nil && !isLeaf(cur) {
+			stack = append(stack, cur)
+			cur = cur.left
+		}
+		if len(stack) == 0 {
+			break
+		}
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if !isLeaf(n) && n.key != "" {
+			vCopy := make([]byte, len(n.value))
+			copy(vCopy, n.value)
+			out = append(out, formats.DataBlock{Key: []byte(n.key), Value: vCopy})
+		}
+		cur = n.right
+	}
+	return out
 }
