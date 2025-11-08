@@ -27,7 +27,13 @@ type ManifestDelFile struct {
 	File_number int
 }
 
-type Sstable_files struct {
-	Live_files  []int
+type ManifestEdit struct {
+	Add         []*ManifestAddFile
+	Delete      []*ManifestDelFile
+	Next_number int
+}
+
+type Sstable_edits struct {
+	Edits       []*ManifestEdit
 	Next_number int
 }
