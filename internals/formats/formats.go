@@ -12,9 +12,9 @@ type DataBlock struct {
 	Value []byte
 }
 
-type IndexTable struct {
+type IndexBlock struct {
 	Key    []byte
-	Offset int
+	Offset uint64
 }
 
 type ManifestAddFile struct {

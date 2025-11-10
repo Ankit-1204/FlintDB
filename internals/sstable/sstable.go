@@ -47,8 +47,112 @@ func readManifest(dbName string) ([]formats.ManifestEdit, error) {
 	}
 
 }
+func WriteSegment(dataBlocks []formats.DataBlock, nextSeq int, dbname string) error {
+	indexTable := make([]formats.IndexBlock, 0)
+	filename := fmt.Sprintf("sstable-%d", nextSeq)
+	tempName := filename + ".tmp"
+	tempPath := filepath.Join(dbname, "sstable", tempName)
+	path := filepath.Join(dbname, "sstable", filename)
+	file, err := os.OpenFile(tempPath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	defer file.Close()
+	writer := bufio.NewWriter(file)
+	var pos uint64
+	pos = 0
+	for _, block := range dataBlocks {
 
-func Snap(m *memtable.MemTable) {
+		indexBlock := formats.IndexBlock{Key: block.Key, Offset: (pos)}
+
+		var data bytes.Buffer
+		if err = binary.Write(&data, binary.LittleEndian, uint32(len(block.Key))); err != nil {
+			return err
+		}
+		data.Write(block.Key)
+		if err = binary.Write(&data, binary.LittleEndian, uint32(len(block.Value))); err != nil {
+			return err
+		}
+		data.Write(block.Value)
+		payload := data.Bytes()
+		indexTable = append(indexTable, indexBlock)
+		n, err := writer.Write(payload)
+		if err != nil {
+			writer.Flush()
+			file.Close()
+			os.Remove(tempPath)
+			return err
+		}
+		if n != len(payload) {
+			writer.Flush()
+			file.Close()
+			os.Remove(tempPath)
+			return io.ErrShortWrite
+		}
+
+		indexTable = append(indexTable, formats.IndexBlock{
+			Key:    block.Key,
+			Offset: (pos),
+		})
+		pos += uint64(n)
+		if err := writer.Flush(); err != nil {
+			file.Close()
+			os.Remove(tempPath)
+			return err
+		}
+
+	}
+	indexStart := pos
+	var indexBuf bytes.Buffer
+	if err = binary.Write(&indexBuf, binary.LittleEndian, uint32(len(indexTable))); err != nil {
+		return err
+	}
+	for _, indexBlock := range indexTable {
+		if err = binary.Write(&indexBuf, binary.LittleEndian, uint32(len(indexBlock.Key))); err != nil {
+			return err
+		}
+		indexBuf.Write(indexBlock.Key)
+		if err = binary.Write(&indexBuf, binary.LittleEndian, (indexBlock.Offset)); err != nil {
+			return err
+		}
+	}
+	idxBytes := indexBuf.Bytes()
+	if _, err := file.Write(idxBytes); err != nil {
+		file.Close()
+		os.Remove(tempPath)
+		return err
+	}
+	footer := make([]byte, 16)
+	binary.LittleEndian.PutUint64(footer[0:8], indexStart)
+	binary.LittleEndian.PutUint64(footer[8:16], uint64(len(idxBytes)))
+	if _, err := file.Write(footer); err != nil {
+		file.Close()
+		os.Remove(tempPath)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		os.Remove(tempPath)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+	return nil
+}
+
+func Snap(m *memtable.MemTable) error {
+	dataBlocks := m.InOrderSlice()
+	if editSlice, err := readManifest(m.Dbname); err != nil {
+		return err
+	}
+	// add code for summarizing the version from edit logs
 
 }
 

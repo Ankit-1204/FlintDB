@@ -21,12 +21,13 @@ const (
 )
 
 type MemTable struct {
-	root *Node
-	mu   sync.Mutex
+	Dbname string
+	root   *Node
+	mu     sync.Mutex
 }
 
-func Start() *MemTable {
-	memTree := MemTable{root: &Node{make([]byte, 0), "", nil, nil, nil, BLACK}}
+func Start(dbname string) *MemTable {
+	memTree := MemTable{root: &Node{make([]byte, 0), "", nil, nil, nil, BLACK}, Dbname: dbname}
 	memTree.root.left = leafNode(memTree.root)
 	memTree.root.right = leafNode(memTree.root)
 	return &memTree

@@ -15,6 +15,7 @@ type Database struct {
 	wal        chan *formats.LogAppend
 	replayChan chan []formats.LogAppend
 	mu         sync.RWMutex
+	ssMu       sync.RWMutex
 	dbName     string
 }
 
@@ -29,7 +30,7 @@ func Open(dbName string) (*Database, error) {
 			return nil, err
 		}
 	}
-	table := memtable.Start()
+	table := memtable.Start(dbName)
 	appChannel := make(chan *formats.LogAppend, 10)
 	replayChan := make(chan []formats.LogAppend)
 	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan}
