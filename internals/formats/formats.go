@@ -17,23 +17,25 @@ type IndexBlock struct {
 	Offset uint64
 }
 
-type ManifestAddFile struct {
+type ManifestFile struct {
 	File_number int
 	SmallestKey []byte
 	LargestKey  []byte
+	Level       int
 }
 
 type ManifestDelFile struct {
 	File_number int
+	Level       int
 }
 
 type ManifestEdit struct {
-	Add         []*ManifestAddFile
-	Delete      []*ManifestDelFile
+	Add         *ManifestFile
+	Delete      *ManifestDelFile
 	Next_number int
 }
 
-type Sstable_edits struct {
-	Edits       []*ManifestEdit
+type SSVersion struct {
+	LevelMap    map[int][]ManifestFile
 	Next_number int
 }

@@ -15,7 +15,7 @@ import (
 )
 
 // both snaP and read need manifest for file read. files should be numbered sequentially. latest file number known how?
-func readManifest(dbName string) ([]formats.ManifestEdit, error) {
+func ReadManifest(dbName string) ([]formats.ManifestEdit, error) {
 	mPath := filepath.Join(dbName, "sstable", "manifest")
 	dirPath := filepath.Dir(mPath)
 	if err := os.MkdirAll(dirPath, os.ModePerm); err != nil {
@@ -147,13 +147,13 @@ func WriteSegment(dataBlocks []formats.DataBlock, nextSeq int, dbname string) er
 	return nil
 }
 
-func Snap(m *memtable.MemTable) error {
+func Snap(m *memtable.MemTable, nextSeq int) (*formats.ManifestFile, error) {
 	dataBlocks := m.InOrderSlice()
-	if editSlice, err := readManifest(m.Dbname); err != nil {
-		return err
+	if err := WriteSegment(dataBlocks, nextSeq, m.Dbname); err != nil {
+		return nil, err
 	}
-	// add code for summarizing the version from edit logs
-
+	file := formats.ManifestFile{File_number: nextSeq, SmallestKey: dataBlocks[0].Key, LargestKey: dataBlocks[len(dataBlocks)-1].Key, Level: 0}
+	return &file, nil
 }
 
 func Read() {
