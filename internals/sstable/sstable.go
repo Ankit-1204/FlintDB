@@ -72,7 +72,7 @@ func AppendManifest(dbName string, edits []formats.ManifestEdit) error {
 			return err
 		}
 		if n, err := writer.Write(payload); err != nil {
-			fmt.Println("written %d bytes", n)
+			fmt.Printf("written %d bytes", n)
 			return err
 		}
 	}
@@ -113,6 +113,14 @@ func WriteSegment(dataBlocks []formats.DataBlock, nextSeq int, dbname string) er
 			return err
 		}
 		data.Write(block.Value)
+		if err = binary.Write(&data, binary.LittleEndian, block.Seq); err != nil {
+			return err
+		}
+		if block.Tombstone {
+			data.WriteByte(1)
+		} else {
+			data.WriteByte(0)
+		}
 		payload := data.Bytes()
 		indexTable = append(indexTable, indexBlock)
 		n, err := writer.Write(payload)

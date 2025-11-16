@@ -13,6 +13,8 @@ type Node struct {
 	left   *Node
 	right  *Node
 	color  int
+	seq    int
+	tomb   bool
 }
 
 const (
@@ -28,7 +30,7 @@ type MemTable struct {
 }
 
 func Start(dbname string) *MemTable {
-	memTree := MemTable{root: &Node{make([]byte, 0), "", nil, nil, nil, BLACK}, Dbname: dbname}
+	memTree := MemTable{root: &Node{make([]byte, 0), "", nil, nil, nil, BLACK, -1, false}, Dbname: dbname}
 	memTree.root.left = leafNode(memTree.root)
 	memTree.root.right = leafNode(memTree.root)
 	return &memTree
@@ -76,7 +78,7 @@ func rightRotate(tree *MemTable, x *Node) {
 }
 
 func leafNode(parent *Node) *Node {
-	return &Node{make([]byte, 0), "", parent, nil, nil, BLACK}
+	return &Node{make([]byte, 0), "", parent, nil, nil, BLACK, -1, false}
 }
 func isLeaf(n *Node) bool {
 	return (n.left == nil && n.right == nil)
@@ -157,7 +159,7 @@ func fixInsert(tree *MemTable, newNode *Node) {
 	}
 }
 
-func (mem *MemTable) Insert(key string, value []byte) error {
+func (mem *MemTable) Insert(key string, value []byte, seq int, tomb bool) error {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
@@ -168,14 +170,47 @@ func (mem *MemTable) Insert(key string, value []byte) error {
 		mem.root.color = BLACK
 		mem.Size += int64(len(key) + len(value))
 		return nil
-	} else {
-		var inserted *Node
-		_, inserted = addNode(mem.root, nil, key, value)
-		fixInsert(mem, inserted)
-		mem.Size += int64(len(key) + len(value))
-		return nil
+	}
+	cur := mem.root
+	for !isLeaf(cur) {
+		if cur.key == key {
+			if cur.seq >= seq {
+				return nil
+			}
+			oldValLen := 0
+			if !cur.tomb && cur.value != nil {
+				oldValLen = len(cur.value)
+			}
+			if value != nil {
+				cur.value = make([]byte, len(value))
+				copy(cur.value, value)
+			} else {
+				cur.value = nil
+			}
+			cur.seq = seq
+			cur.tomb = tomb
+			mem.Size += int64(-oldValLen)
+			if !tomb && value != nil {
+				mem.Size += int64(len(value))
+			}
+			return nil
+		} else if cur.key > key {
+			cur = cur.left
+		} else {
+			cur = cur.right
+		}
 	}
 
+	var inserted *Node
+	_, inserted = addNode(mem.root, nil, key, value)
+	fixInsert(mem, inserted)
+	inserted.seq = seq
+	inserted.tomb = tomb
+	mem.Size += int64(len(key))
+	if !tomb && value != nil {
+		mem.Size += int64(len(value))
+	}
+	return nil
 }
 func find(root *Node, key string) []byte {
 	if root.left == nil && root.right == nil {
@@ -226,7 +261,7 @@ func (mem *MemTable) InOrderSlice() []formats.DataBlock {
 		if !isLeaf(n) && n.key != "" {
 			vCopy := make([]byte, len(n.value))
 			copy(vCopy, n.value)
-			out = append(out, formats.DataBlock{Key: []byte(n.key), Value: vCopy})
+			out = append(out, formats.DataBlock{Key: []byte(n.key), Value: vCopy, Seq: uint64(n.seq), Tombstone: n.tomb})
 		}
 		cur = n.right
 	}

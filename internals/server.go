@@ -87,8 +87,12 @@ func (db *Database) replayCreate() error {
 		for _, entry := range msg {
 			switch entry.Operation {
 			case "P":
-				err := db.table.Insert(entry.Key, entry.Payload)
+				err := db.table.Insert(entry.Key, entry.Payload, int(entry.Seq), entry.Tombstone)
 				if err != nil {
+					return err
+				}
+			case "D":
+				if err := db.table.Insert(entry.Key, nil, int(entry.Seq), true); err != nil {
 					return err
 				}
 			case "G":
@@ -116,7 +120,7 @@ func (db *Database) Put(key string, value []byte) error {
 	if err != nil {
 		return err
 	}
-	err = db.table.Insert(key, value)
+	err = db.table.Insert(key, value, int(Msg.Seq), Msg.Tombstone)
 	if err != nil {
 		return err
 	}
