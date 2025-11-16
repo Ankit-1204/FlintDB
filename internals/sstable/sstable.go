@@ -32,10 +32,16 @@ func ReadManifest(dbName string) ([]formats.ManifestEdit, error) {
 	for {
 		var payHeader uint32
 		if err = binary.Read(reader, binary.LittleEndian, &payHeader); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
 			return edits, err
 		}
 		payload := make([]byte, payHeader)
 		if _, err := io.ReadFull(reader, payload); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
 			return edits, err
 		}
 		var cEdit formats.ManifestEdit
@@ -45,7 +51,7 @@ func ReadManifest(dbName string) ([]formats.ManifestEdit, error) {
 			return edits, err
 		}
 	}
-
+	return edits, nil
 }
 
 func AppendManifest(dbName string, edits []formats.ManifestEdit) error {

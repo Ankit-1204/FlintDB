@@ -44,6 +44,8 @@ func Open(dbName string) (*Database, error) {
 	flushChan := make(chan *memtable.MemTable)
 	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, MaxMemSize: 32 * 1024 * 1024}
 	go wal.StartLog(appChannel, replayChan, dbName)
+
+	// Note to self: orphaned sstables not detected for calculating nextNum
 	if err = db.getVersion(editSlice); err != nil {
 		return nil, err
 	}
@@ -54,7 +56,7 @@ func Open(dbName string) (*Database, error) {
 }
 
 func (db *Database) getVersion(editSlice []formats.ManifestEdit) error {
-	ssVersion := formats.SSVersion{LevelMap: make(map[int][]formats.ManifestFile)}
+	ssVersion := formats.SSVersion{LevelMap: make(map[int][]formats.ManifestFile), Next_number: 0}
 	for _, val := range editSlice {
 		if val.Add != nil {
 			mval := ssVersion.LevelMap[val.Add.Level]
@@ -75,9 +77,13 @@ func (db *Database) getVersion(editSlice []formats.ManifestEdit) error {
 				return fmt.Errorf("delete: file %d not found in level %d", val.Delete.File_number, level)
 			}
 			files = append(files[:idx], files[idx+1:]...)
+
 			ssVersion.LevelMap[level] = files
 		}
+		ssVersion.Next_number = max(ssVersion.Next_number, val.Next_number)
 	}
+	db.ssMu.Lock()
+	defer db.ssMu.Unlock()
 	db.ssVersion = &ssVersion
 	return nil
 }
@@ -141,10 +147,10 @@ func (db *Database) Put(key string, value []byte) error {
 
 func (db *Database) flushQueue() {
 	for table := range db.flushChan {
-		db.mu.Lock()
+		db.ssMu.Lock()
 		nextSeq := db.ssVersion.Next_number
 		db.ssVersion.Next_number++
-		db.mu.Unlock()
+		db.ssMu.Unlock()
 		file, err := sstable.Snap(table, nextSeq)
 		if err != nil {
 			fmt.Println(err)
