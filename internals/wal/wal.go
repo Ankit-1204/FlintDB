@@ -104,7 +104,10 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 		fmt.Println(err)
 		return err
 	}
-	records := m.Replay()
+	var nextSeq uint64 = 1
+
+	records, maxSeq := m.Replay()
+	nextSeq = max(maxSeq, nextSeq)
 	replayChan <- records
 	for msg := range m.Msg {
 		var buf bytes.Buffer
@@ -115,7 +118,13 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 		binary.Write(&buf, binary.LittleEndian, uint32(len(msg.Payload)))
 		buf.Write([]byte(msg.Payload))
 		buf.Write([]byte(msg.Operation))
-
+		msg.Seq = nextSeq
+		binary.Write(&buf, binary.LittleEndian, nextSeq)
+		if msg.Tombstone {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
 		record := buf.Bytes()
 		writer.Write(record)
 		if err := writer.Flush(); err != nil {
@@ -155,14 +164,15 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 
 }
 
-func (m *LogManager) Replay() []formats.LogAppend {
+func (m *LogManager) Replay() ([]formats.LogAppend, uint64) {
 	fileArray := readManifest(m.ManifestPath)
 	records := make([]formats.LogAppend, 0)
+	var maxSeq uint64 = -0
 	for _, entry := range fileArray.File {
 		f, err := os.OpenFile(entry, os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Println(err)
-			return nil
+			return nil, 0
 		}
 		reader := bufio.NewReader(f)
 		for {
@@ -188,11 +198,20 @@ func (m *LogManager) Replay() []formats.LogAppend {
 			if _, err = io.ReadFull(reader, operation); err != nil {
 				break
 			}
-
-			newRecord := formats.LogAppend{Key: string(key), Payload: payload, Operation: string(operation), Done: nil}
+			var nextSeq uint64
+			if err = binary.Read(reader, binary.LittleEndian, &nextSeq); err != nil {
+				break
+			}
+			tomb := make([]byte, 1)
+			if _, err = io.ReadFull(reader, tomb); err != nil {
+				break
+			}
+			tombstone := tomb[0] == 1
+			maxSeq = max(maxSeq, nextSeq)
+			newRecord := formats.LogAppend{Key: string(key), Payload: payload, Operation: string(operation), Seq: nextSeq, Tombstone: tombstone, Done: nil}
 			records = append(records, newRecord)
 		}
 		f.Close()
 	}
-	return records
+	return records, maxSeq
 }

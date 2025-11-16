@@ -5,11 +5,15 @@ type LogAppend struct {
 	Payload   []byte
 	Operation string
 	Done      chan error
+	Seq       uint64
+	Tombstone bool
 }
 
 type DataBlock struct {
-	Key   []byte
-	Value []byte
+	Key       []byte
+	Value     []byte
+	Seq       uint64
+	Tombstone bool
 }
 
 type IndexBlock struct {

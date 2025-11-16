@@ -12,14 +12,16 @@ import (
 )
 
 type Database struct {
-	table      *memtable.MemTable
-	wal        chan *formats.LogAppend
-	replayChan chan []formats.LogAppend
-	flushChan  chan *memtable.MemTable
-	mu         sync.RWMutex
-	ssMu       sync.RWMutex
-	dbName     string
-	ssVersion  *formats.SSVersion
+	table          *memtable.MemTable
+	wal            chan *formats.LogAppend
+	replayChan     chan []formats.LogAppend
+	flushChan      chan *memtable.MemTable
+	compactionChan chan bool
+	mu             sync.RWMutex
+	ssMu           sync.RWMutex
+	dbName         string
+	ssVersion      *formats.SSVersion
+	MaxMemSize     int64
 }
 
 func Open(dbName string) (*Database, error) {
@@ -40,12 +42,13 @@ func Open(dbName string) (*Database, error) {
 	appChannel := make(chan *formats.LogAppend, 10)
 	replayChan := make(chan []formats.LogAppend)
 	flushChan := make(chan *memtable.MemTable)
-	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan}
+	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, MaxMemSize: 32 * 1024 * 1024}
 	go wal.StartLog(appChannel, replayChan, dbName)
 	if err = db.getVersion(editSlice); err != nil {
 		return nil, err
 	}
 	db.replayCreate()
+	go db.flushQueue()
 	return &db, nil
 
 }
@@ -117,6 +120,18 @@ func (db *Database) Put(key string, value []byte) error {
 	if err != nil {
 		return err
 	}
+	if db.table.Size > db.MaxMemSize {
+		old := db.table
+		db.table = memtable.Start(db.dbName)
+		// so if the channel is full, we can spawn a goroutine that will push to that channel. neat
+		select {
+		case db.flushChan <- old:
+		default:
+			go func(old *memtable.MemTable) {
+				db.flushChan <- old
+			}(old)
+		}
+	}
 	return nil
 }
 
@@ -131,11 +146,17 @@ func (db *Database) flushQueue() {
 			fmt.Println(err)
 		}
 
+		edits := make([]formats.ManifestEdit, 0)
+		edits = append(edits, formats.ManifestEdit{Add: file, Next_number: nextSeq + 1})
+		err = sstable.AppendManifest(db.dbName, edits)
 		db.ssMu.Lock()
 		levelFiles := db.ssVersion.LevelMap[0]
 		levelFiles = append(levelFiles, *file)
 		db.ssVersion.LevelMap[0] = levelFiles
 		db.ssMu.Unlock()
-
 	}
+}
+
+func (db *Database) compactionQueue() {
+
 }

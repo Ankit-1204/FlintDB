@@ -47,6 +47,44 @@ func ReadManifest(dbName string) ([]formats.ManifestEdit, error) {
 	}
 
 }
+
+func AppendManifest(dbName string, edits []formats.ManifestEdit) error {
+	mPath := filepath.Join(dbName, "sstable", "manifest")
+	dirPath := filepath.Dir(mPath)
+	if err := os.MkdirAll(dirPath, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dirPath, err)
+	}
+	file, err := os.OpenFile(mPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	writer := bufio.NewWriter(file)
+	defer file.Close()
+	for _, adds := range edits {
+		var buf bytes.Buffer
+		encoder := gob.NewEncoder(&buf)
+		if err := encoder.Encode(adds); err != nil {
+			return err
+		}
+		payload := buf.Bytes()
+		if err = binary.Write(writer, binary.LittleEndian, uint32(len(payload))); err != nil {
+			return err
+		}
+		if n, err := writer.Write(payload); err != nil {
+			fmt.Println("written %d bytes", n)
+			return err
+		}
+	}
+	if err = writer.Flush(); err != nil {
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func WriteSegment(dataBlocks []formats.DataBlock, nextSeq int, dbname string) error {
 	indexTable := make([]formats.IndexBlock, 0)
 	filename := fmt.Sprintf("sstable-%d", nextSeq)

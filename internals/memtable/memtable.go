@@ -24,6 +24,7 @@ type MemTable struct {
 	Dbname string
 	root   *Node
 	mu     sync.Mutex
+	Size   int64
 }
 
 func Start(dbname string) *MemTable {
@@ -165,11 +166,13 @@ func (mem *MemTable) Insert(key string, value []byte) error {
 		mem.root.value = make([]byte, len(value))
 		copy(mem.root.value, value)
 		mem.root.color = BLACK
+		mem.Size += int64(len(key) + len(value))
 		return nil
 	} else {
 		var inserted *Node
 		_, inserted = addNode(mem.root, nil, key, value)
 		fixInsert(mem, inserted)
+		mem.Size += int64(len(key) + len(value))
 		return nil
 	}
 
