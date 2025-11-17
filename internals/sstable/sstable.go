@@ -210,7 +210,7 @@ func Snap(m *memtable.MemTable, nextSeq int) (*formats.ManifestFile, error) {
 
 func OpenSStable(File_number int) (*formats.SStableReader, error) {
 	filename := fmt.Sprintf("sstable-%d", File_number)
-	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE, 0644)
+	file, err := os.OpenFile(filename, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -220,16 +220,38 @@ func OpenSStable(File_number int) (*formats.SStableReader, error) {
 	}
 	bufFoot := make([]byte, 16)
 	if n, err := io.ReadFull(file, bufFoot); err != nil {
-		fmt.Println("read %d bits", n)
+		fmt.Printf("read %d bits", n)
 		return nil, err
 	}
 	indexStart := int64(binary.LittleEndian.Uint64(bufFoot[0:8]))
 	indexLen := int64(binary.LittleEndian.Uint64(bufFoot[8:16]))
 
-	_, err = file.Seek(indexStart, io.SeekStart)
+	_, err = file.Seek(indexStart+4, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 	indexTable := make([]formats.IndexBlock, 0)
+	runSize := indexLen - 4
+	for runSize > 0 {
+		var keyLen uint32
+		if err = binary.Read(file, binary.LittleEndian, &keyLen); err != nil {
+			return nil, err
+		}
+		runSize -= 4
+		key := make([]byte, keyLen)
+		if n, err := io.ReadFull(file, key); err != nil {
+			fmt.Printf("read %d bits", n)
+			return nil, err
+		}
+		runSize -= int64(keyLen)
+		var offset uint64
+		if err := binary.Read(file, binary.LittleEndian, &offset); err != nil {
+			return nil, fmt.Errorf("read offset: %w", err)
+		}
+		runSize -= 8
+		indexTable = append(indexTable, formats.IndexBlock{Key: key, Offset: offset})
+	}
+	ssIterator := formats.SStableReader{File: file, IndexTable: indexTable}
+	return &ssIterator, nil
 
 }
