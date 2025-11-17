@@ -3,6 +3,7 @@ package internals
 import (
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/Ankit-1204/FlintDB.git/internals/formats"
@@ -167,6 +168,24 @@ func (db *Database) flushQueue() {
 	}
 }
 
-func (db *Database) compactionQueue() {
+func (db *Database) pickCandidate() []formats.CompactionCandidate {
+	db.ssMu.RLock()
+	defer db.ssMu.RUnlock()
+	const fileFactor = 4
 
+	var out []formats.CompactionCandidate
+	for level, val := range db.ssVersion.LevelMap {
+		if len(val) > fileFactor {
+			sort.Slice(val, func(i, j int) bool { return val[i].File_size < val[j].File_size })
+			selCount := fileFactor
+			if len(val) < selCount {
+				selCount = len(val)
+			}
+			sel := make([]formats.ManifestFile, selCount)
+			copy(sel, val[:selCount])
+			out = append(out, formats.CompactionCandidate{Level: level, Files: sel})
+			break // do one candidate at a time
+		}
+	}
+	return out
 }

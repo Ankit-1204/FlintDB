@@ -1,5 +1,7 @@
 package formats
 
+import "os"
+
 type LogAppend struct {
 	Key       string
 	Payload   []byte
@@ -26,6 +28,7 @@ type ManifestFile struct {
 	SmallestKey []byte
 	LargestKey  []byte
 	Level       int
+	File_size   int
 }
 
 type ManifestDelFile struct {
@@ -42,4 +45,14 @@ type ManifestEdit struct {
 type SSVersion struct {
 	LevelMap    map[int][]ManifestFile
 	Next_number int
+}
+
+type CompactionCandidate struct {
+	Level int
+	Files []ManifestFile
+}
+
+type SStableReader struct {
+	File       *os.File
+	IndexTable []IndexBlock
 }

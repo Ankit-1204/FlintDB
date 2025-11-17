@@ -204,10 +204,32 @@ func Snap(m *memtable.MemTable, nextSeq int) (*formats.ManifestFile, error) {
 	if err := WriteSegment(dataBlocks, nextSeq, m.Dbname); err != nil {
 		return nil, err
 	}
-	file := formats.ManifestFile{File_number: nextSeq, SmallestKey: dataBlocks[0].Key, LargestKey: dataBlocks[len(dataBlocks)-1].Key, Level: 0}
+	file := formats.ManifestFile{File_number: nextSeq, SmallestKey: dataBlocks[0].Key, LargestKey: dataBlocks[len(dataBlocks)-1].Key, Level: 0, File_size: int(m.Size)}
 	return &file, nil
 }
 
-func Read() {
+func OpenSStable(File_number int) (*formats.SStableReader, error) {
+	filename := fmt.Sprintf("sstable-%d", File_number)
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, err
+	}
+	_, err = file.Seek(-16, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+	bufFoot := make([]byte, 16)
+	if n, err := io.ReadFull(file, bufFoot); err != nil {
+		fmt.Println("read %d bits", n)
+		return nil, err
+	}
+	indexStart := int64(binary.LittleEndian.Uint64(bufFoot[0:8]))
+	indexLen := int64(binary.LittleEndian.Uint64(bufFoot[8:16]))
+
+	_, err = file.Seek(indexStart, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+	indexTable := make([]formats.IndexBlock, 0)
 
 }
