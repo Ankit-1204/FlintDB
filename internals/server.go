@@ -184,7 +184,7 @@ func (db *Database) pickCandidate() []formats.CompactionCandidate {
 			sel := make([]formats.ManifestFile, selCount)
 			copy(sel, val[:selCount])
 			out = append(out, formats.CompactionCandidate{Level: level, Files: sel})
-			break // do one candidate at a time
+			break
 		}
 	}
 	return out
