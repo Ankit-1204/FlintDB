@@ -1,10 +1,13 @@
 package internals
 
 import (
+	"bytes"
+	"container/heap"
 	"fmt"
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Ankit-1204/FlintDB.git/internals/formats"
 	"github.com/Ankit-1204/FlintDB.git/internals/memtable"
@@ -18,6 +21,7 @@ type Database struct {
 	replayChan     chan []formats.LogAppend
 	flushChan      chan *memtable.MemTable
 	compactionChan chan bool
+	nextFileNumber uint64
 	mu             sync.RWMutex
 	ssMu           sync.RWMutex
 	dbName         string
@@ -43,7 +47,7 @@ func Open(dbName string) (*Database, error) {
 	appChannel := make(chan *formats.LogAppend, 10)
 	replayChan := make(chan []formats.LogAppend)
 	flushChan := make(chan *memtable.MemTable)
-	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, MaxMemSize: 32 * 1024 * 1024}
+	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, MaxMemSize: 32 * 1024 * 1024, nextFileNumber: 0}
 	go wal.StartLog(appChannel, replayChan, dbName)
 
 	// Note to self: orphaned sstables not detected for calculating nextNum
@@ -57,7 +61,7 @@ func Open(dbName string) (*Database, error) {
 }
 
 func (db *Database) getVersion(editSlice []formats.ManifestEdit) error {
-	ssVersion := formats.SSVersion{LevelMap: make(map[int][]formats.ManifestFile), Next_number: 0}
+	ssVersion := formats.SSVersion{LevelMap: make(map[int][]formats.ManifestFile)}
 	for _, val := range editSlice {
 		if val.Add != nil {
 			mval := ssVersion.LevelMap[val.Add.Level]
@@ -81,8 +85,10 @@ func (db *Database) getVersion(editSlice []formats.ManifestEdit) error {
 
 			ssVersion.LevelMap[level] = files
 		}
-		ssVersion.Next_number = max(ssVersion.Next_number, val.Next_number)
+		atomic.StoreUint64(&db.nextFileNumber, max(db.nextFileNumber, uint64(val.Next_number)))
+
 	}
+
 	db.ssMu.Lock()
 	defer db.ssMu.Unlock()
 	db.ssVersion = &ssVersion
@@ -148,17 +154,16 @@ func (db *Database) Put(key string, value []byte) error {
 
 func (db *Database) flushQueue() {
 	for table := range db.flushChan {
-		db.ssMu.Lock()
-		nextSeq := db.ssVersion.Next_number
-		db.ssVersion.Next_number++
-		db.ssMu.Unlock()
-		file, err := sstable.Snap(table, nextSeq)
+
+		nextSeq := atomic.AddUint64(&db.nextFileNumber, 1) - 1
+
+		file, err := sstable.Snap(table, int(nextSeq))
 		if err != nil {
 			fmt.Println(err)
 		}
 
 		edits := make([]formats.ManifestEdit, 0)
-		edits = append(edits, formats.ManifestEdit{Add: file, Next_number: nextSeq + 1})
+		edits = append(edits, formats.ManifestEdit{Add: file, Next_number: int(nextSeq + 1)})
 		err = sstable.AppendManifest(db.dbName, edits)
 		db.ssMu.Lock()
 		levelFiles := db.ssVersion.LevelMap[0]
@@ -188,4 +193,40 @@ func (db *Database) pickCandidate() []formats.CompactionCandidate {
 		}
 	}
 	return out
+}
+
+func performCompaction(iterators []*formats.SSIterator, nextFileNumber uint64, dbname string) error {
+	h := &formats.MinHeap{}
+	heap.Init(h)
+
+	for idx, val := range iterators {
+		if val.Next() {
+			heap.Push(h, &formats.HeapItem{Key: val.Key(), Value: val.Value(), Seq: val.Seq(), Tombstone: val.Tomb(), IteratorIndex: idx})
+		}
+	}
+	var lastKey []byte
+	var writeBlocks []formats.DataBlock
+	for h.Len() > 0 {
+		item := heap.Pop(h).(*formats.HeapItem)
+		if lastKey != nil && bytes.Equal(item.Key, lastKey) {
+
+		} else {
+			if !item.Tombstone {
+				writeBlocks = append(writeBlocks, formats.DataBlock{Key: item.Key, Value: item.Value, Seq: item.Seq, Tombstone: item.Tombstone})
+			}
+		}
+		lastKey = item.Key
+		it := iterators[item.IteratorIndex]
+		if it.Next() {
+			heap.Push(h, &formats.HeapItem{Key: it.Key(), Value: it.Value(), Seq: it.Seq(), Tombstone: it.Tomb(), IteratorIndex: item.IteratorIndex})
+		}
+	}
+	if len(writeBlocks) > 0 {
+		seq := atomic.AddUint64(&nextFileNumber, 1) - 1
+		if err := sstable.WriteSegment(writeBlocks, int(seq), dbname); err != nil {
+			return nil
+		}
+	}
+	// need to implement manifest update codde
+	return nil
 }

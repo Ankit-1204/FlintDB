@@ -48,8 +48,7 @@ type ManifestEdit struct {
 }
 
 type SSVersion struct {
-	LevelMap    map[int][]ManifestFile
-	Next_number int
+	LevelMap map[int][]ManifestFile
 }
 
 type CompactionCandidate struct {
