@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -238,30 +239,124 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 			heap.Push(h, &formats.HeapItem{Key: val.Key(), Value: val.Value(), Seq: val.Seq(), Tombstone: val.Tomb(), IteratorIndex: idx})
 		}
 	}
-	var lastKey []byte
-	var writeBlocks []formats.DataBlock
+	var curKey []byte
+	var best formats.DataBlock
+	var merged []formats.DataBlock
+	pushBest := func() {
+		if best.Key == nil {
+			return
+		}
+		// copy key/value so later buffer reuse from iterators doesn't bite us
+		k := make([]byte, len(best.Key))
+		copy(k, best.Key)
+		v := make([]byte, len(best.Value))
+		copy(v, best.Value)
+		merged = append(merged, formats.DataBlock{
+			Key:       k,
+			Value:     v,
+			Seq:       best.Seq,
+			Tombstone: best.Tombstone,
+		})
+		best = formats.DataBlock{} // reset
+	}
 	for h.Len() > 0 {
-		item := heap.Pop(h).(*formats.HeapItem)
-		if lastKey != nil && bytes.Equal(item.Key, lastKey) {
+		itItem := heap.Pop(h).(*formats.HeapItem)
 
+		if curKey == nil {
+			// first key seen
+			curKey = make([]byte, len(itItem.Key))
+			copy(curKey, itItem.Key)
+			best = formats.DataBlock{Key: itItem.Key, Value: itItem.Value, Seq: itItem.Seq, Tombstone: itItem.Tombstone}
+		} else if bytes.Equal(itItem.Key, curKey) {
+			// same key — pick item with larger seq
+			if itItem.Seq > best.Seq {
+				best = formats.DataBlock{Key: itItem.Key, Value: itItem.Value, Seq: itItem.Seq, Tombstone: itItem.Tombstone}
+			}
 		} else {
-			if !item.Tombstone {
-				writeBlocks = append(writeBlocks, formats.DataBlock{Key: item.Key, Value: item.Value, Seq: item.Seq, Tombstone: item.Tombstone})
+			// new key encountered: push the best for prev key
+			pushBest()
+			curKey = make([]byte, len(itItem.Key))
+			copy(curKey, itItem.Key)
+			best = formats.DataBlock{Key: itItem.Key, Value: itItem.Value, Seq: itItem.Seq, Tombstone: itItem.Tombstone}
+		}
+
+		// advance the iterator that produced the heap item
+		srcIt := iterators[itItem.IteratorIndex]
+		if srcIt.Next() {
+			heap.Push(h, &formats.HeapItem{
+				Key:           srcIt.Key(),
+				Value:         srcIt.Value(),
+				Seq:           srcIt.Seq(),
+				Tombstone:     srcIt.Tomb(),
+				IteratorIndex: itItem.IteratorIndex,
+			})
+		} else {
+			// iterator exhausted or read error — close underlying file
+			if srcIt.Reader != nil && srcIt.Reader.File != nil {
+				_ = srcIt.Reader.File.Close()
 			}
 		}
-		lastKey = item.Key
-		it := iterators[item.IteratorIndex]
-		if it.Next() {
-			heap.Push(h, &formats.HeapItem{Key: it.Key(), Value: it.Value(), Seq: it.Seq(), Tombstone: it.Tomb(), IteratorIndex: item.IteratorIndex})
-		}
 	}
-	if len(writeBlocks) > 0 {
-		seq := atomic.AddUint64(&db.nextFileNumber, 1) - 1
-		if err := sstable.WriteSegment(writeBlocks, int(seq), db.dbName); err != nil {
-			return nil
-		}
+	pushBest()
+	if len(merged) == 0 {
+		return nil
 	}
-	// need to implement manifest update codde
+	newFileNum := int(atomic.AddUint64(&db.nextFileNumber, 1) - 1)
+	if err := sstable.WriteSegment(merged, newFileNum, db.dbName); err != nil {
+		return fmt.Errorf("write merged sstable: %w", err)
+	}
+	newPath := filepath.Join(db.dbName, "sstable", fmt.Sprintf("sstable-%d", newFileNum))
+	st, err := os.Stat(newPath)
+	if err != nil {
+		return fmt.Errorf("stat new sstable file: %w", err)
+	}
+	smallest := merged[0].Key
+	largest := merged[len(merged)-1].Key
+	addFile := formats.ManifestFile{
+		File_number: newFileNum,
+		SmallestKey: smallest,
+		LargestKey:  largest,
+		Level:       targetLevel,
+		File_size:   int(st.Size()),
+	}
+	var edits []formats.ManifestEdit
+	edits = append(edits, formats.ManifestEdit{
+		Add:         &addFile,
+		Delete:      nil,
+		Next_number: newFileNum + 1,
+	})
+	for _, old := range candidate.Files {
+		del := formats.ManifestEdit{
+			Add: nil,
+			Delete: &formats.ManifestDelFile{
+				File_number: old.File_number,
+				Level:       old.Level,
+			},
+			Next_number: 0,
+		}
+		edits = append(edits, del)
+	}
+	if err := sstable.AppendManifest(db.dbName, edits); err != nil {
+		// don't delete old files,, keep them until manifest records deletion
+		return fmt.Errorf("append manifest edits: %w", err)
+	}
+	db.ssMu.Lock()
+	db.ssVersion.LevelMap[targetLevel] = append(db.ssVersion.LevelMap[targetLevel], addFile)
+	for _, old := range candidate.Files {
+		files := db.ssVersion.LevelMap[old.Level]
+		newFiles := make([]formats.ManifestFile, 0, len(files))
+		for _, f := range files {
+			if f.File_number != old.File_number {
+				newFiles = append(newFiles, f)
+			}
+		}
+		db.ssVersion.LevelMap[old.Level] = newFiles
+	}
+	db.ssMu.Unlock()
+	for _, old := range candidate.Files {
+		oldPath := filepath.Join(db.dbName, "sstable", fmt.Sprintf("sstable-%d", old.File_number))
+		_ = os.Remove(oldPath)
+	}
 	return nil
 }
 
@@ -273,4 +368,5 @@ func (db *Database) compactionProcess() error {
 			return err
 		}
 	}
+	return nil
 }
