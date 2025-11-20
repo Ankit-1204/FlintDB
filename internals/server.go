@@ -173,29 +173,63 @@ func (db *Database) flushQueue() {
 	}
 }
 
-func (db *Database) pickCandidate() []formats.CompactionCandidate {
+func (db *Database) pickCandidate() *formats.CompactionCandidate {
 	db.ssMu.RLock()
 	defer db.ssMu.RUnlock()
 	const fileFactor = 4
 
-	var out []formats.CompactionCandidate
-	for level, val := range db.ssVersion.LevelMap {
-		if len(val) > fileFactor {
-			sort.Slice(val, func(i, j int) bool { return val[i].File_size < val[j].File_size })
-			selCount := fileFactor
-			if len(val) < selCount {
-				selCount = len(val)
-			}
-			sel := make([]formats.ManifestFile, selCount)
-			copy(sel, val[:selCount])
-			out = append(out, formats.CompactionCandidate{Level: level, Files: sel})
-			break
+	maxLevel := 0
+	for l := range db.ssVersion.LevelMap {
+		if l > maxLevel {
+			maxLevel = l
 		}
 	}
-	return out
+	for level := 0; level <= maxLevel; level++ {
+		val, ok := db.ssVersion.LevelMap[level]
+		if !ok || len(val) <= fileFactor {
+			continue
+		}
+		tmp := make([]formats.ManifestFile, len(val))
+		copy(tmp, val)
+		sort.Slice(tmp, func(i, j int) bool { return tmp[i].File_size < tmp[j].File_size })
+
+		selCount := fileFactor
+		if len(tmp) < selCount {
+			selCount = len(tmp)
+		}
+		sel := make([]formats.ManifestFile, selCount)
+		copy(sel, tmp[:selCount])
+
+		return &formats.CompactionCandidate{Level: level, Files: sel}
+	}
+	return nil
 }
 
-func performCompaction(iterators []*formats.SSIterator, nextFileNumber uint64, dbname string) error {
+func (db *Database) performCompaction(candidate *formats.CompactionCandidate) error {
+
+	targetLevel := candidate.Level + 1
+
+	var iterators []*formats.SSIterator
+	for _, mf := range candidate.Files {
+		ssr, err := sstable.OpenSStable(mf.File_number)
+		it := &formats.SSIterator{
+			Reader:       ssr,
+			CurrentIndex: 0,
+		}
+		if ok := it.Next(); !ok {
+			// no entries / error reading — close underlying file and skip
+			_ = ssr.File.Close()
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("open sstable %d: %w", mf.File_number, err)
+		}
+		iterators = append(iterators, it)
+	}
+	if len(iterators) == 0 {
+		return nil
+	}
+
 	h := &formats.MinHeap{}
 	heap.Init(h)
 
@@ -222,11 +256,21 @@ func performCompaction(iterators []*formats.SSIterator, nextFileNumber uint64, d
 		}
 	}
 	if len(writeBlocks) > 0 {
-		seq := atomic.AddUint64(&nextFileNumber, 1) - 1
-		if err := sstable.WriteSegment(writeBlocks, int(seq), dbname); err != nil {
+		seq := atomic.AddUint64(&db.nextFileNumber, 1) - 1
+		if err := sstable.WriteSegment(writeBlocks, int(seq), db.dbName); err != nil {
 			return nil
 		}
 	}
 	// need to implement manifest update codde
 	return nil
+}
+
+func (db *Database) compactionProcess() error {
+	cand := db.pickCandidate()
+	if cand != nil {
+		if err := db.performCompaction(cand); err != nil {
+			fmt.Println(err)
+			return err
+		}
+	}
 }
