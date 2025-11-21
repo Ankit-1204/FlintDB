@@ -178,26 +178,6 @@ See [fixes.md](fixes.md) and [critique.md](critique.md) for detailed technical a
 | Read (Get) | O(log n) + O(k) | Memtable + k SSTables |
 | Flush | O(n log n) | In-order traversal |
 | Compaction | O(n log k) | k-way merge |
-
-## Roadmap
-
-### Phase 1: Core Stability
-- [ ] Fix critical issues (see fixes.md)
-- [ ] Add comprehensive test suite
-- [ ] Implement proper logging
-
-### Phase 2: Performance
-- [ ] Add bloom filters to SSTables
-- [ ] Implement block cache
-- [ ] Optimize compaction strategy
-- [ ] Add range scan API
-
-### Phase 3: Advanced Features
-- [ ] Compression (Snappy/Zstd)
-- [ ] Checksums for data integrity
-- [ ] Configurable parameters
-- [ ] Metrics and monitoring
-
 <!-- ## Contributing
 
 Contributions are welcome! Please:
