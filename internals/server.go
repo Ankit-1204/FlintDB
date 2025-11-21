@@ -155,6 +155,44 @@ func (db *Database) Put(key string, value []byte) error {
 	return nil
 }
 
+// In internals/server.go
+
+func (db *Database) Delete(key string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	Msg := &formats.LogAppend{
+		Key:       key,
+		Payload:   nil,
+		Operation: "D",
+		Done:      make(chan error),
+		Tombstone: true,
+	}
+	db.wal <- Msg
+	err := <-Msg.Done
+	if err != nil {
+		return err
+	}
+
+	err = db.table.Insert(key, nil, int(Msg.Seq), true)
+	if err != nil {
+		return err
+	}
+
+	if db.table.Size > db.MaxMemSize {
+		old := db.table
+		db.table = memtable.Start(db.dbName)
+		select {
+		case db.flushChan <- old:
+		default:
+			go func(old *memtable.MemTable) {
+				db.flushChan <- old
+			}(old)
+		}
+	}
+	return nil
+}
+
 func (db *Database) flushQueue() {
 	for table := range db.flushChan {
 
@@ -218,18 +256,17 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 
 	var iterators []*formats.SSIterator
 	for _, mf := range candidate.Files {
-		ssr, err := sstable.OpenSStable(mf.File_number)
+		ssr, err := sstable.OpenSStable(mf.File_number, db.dbName)
+		if err != nil {
+			return fmt.Errorf("open sstable %d: %w", mf.File_number, err)
+		}
 		it := &formats.SSIterator{
 			Reader:       ssr,
 			CurrentIndex: 0,
 		}
 		if ok := it.Next(); !ok {
-			// no entries / error reading — close underlying file and skip
 			_ = ssr.File.Close()
 			continue
-		}
-		if err != nil {
-			return fmt.Errorf("open sstable %d: %w", mf.File_number, err)
 		}
 		iterators = append(iterators, it)
 	}
@@ -245,6 +282,15 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 			heap.Push(h, &formats.HeapItem{Key: val.Key(), Value: val.Value(), Seq: val.Seq(), Tombstone: val.Tomb(), IteratorIndex: idx})
 		}
 	}
+	isBottomLevel := true
+	db.ssMu.RLock()
+	for l := range db.ssVersion.LevelMap {
+		if l > targetLevel {
+			isBottomLevel = false
+			break
+		}
+	}
+	db.ssMu.RUnlock()
 	var curKey []byte
 	var best formats.DataBlock
 	var merged []formats.DataBlock
@@ -252,7 +298,10 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 		if best.Key == nil {
 			return
 		}
-		// copy key/value so later buffer reuse from iterators doesn't bite us
+		if best.Tombstone && isBottomLevel {
+			best = formats.DataBlock{}
+			return
+		}
 		k := make([]byte, len(best.Key))
 		copy(k, best.Key)
 		v := make([]byte, len(best.Value))
@@ -263,7 +312,7 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 			Seq:       best.Seq,
 			Tombstone: best.Tombstone,
 		})
-		best = formats.DataBlock{} // reset
+		best = formats.DataBlock{}
 	}
 	for h.Len() > 0 {
 		itItem := heap.Pop(h).(*formats.HeapItem)
@@ -296,7 +345,6 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 				IteratorIndex: itItem.IteratorIndex,
 			})
 		} else {
-			// iterator exhausted or read error — close underlying file
 			if srcIt.Reader != nil && srcIt.Reader.File != nil {
 				_ = srcIt.Reader.File.Close()
 			}

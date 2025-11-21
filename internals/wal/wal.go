@@ -120,6 +120,7 @@ func StartLog(appChannel chan *formats.LogAppend, replayChan chan []formats.LogA
 		buf.Write([]byte(msg.Operation))
 		msg.Seq = nextSeq
 		binary.Write(&buf, binary.LittleEndian, nextSeq)
+		nextSeq++
 		if msg.Tombstone {
 			buf.WriteByte(1)
 		} else {

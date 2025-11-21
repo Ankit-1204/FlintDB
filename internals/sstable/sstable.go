@@ -208,9 +208,10 @@ func Snap(m *memtable.MemTable, nextSeq int) (*formats.ManifestFile, error) {
 	return &file, nil
 }
 
-func OpenSStable(File_number int) (*formats.SStableReader, error) {
+func OpenSStable(File_number int, dbname string) (*formats.SStableReader, error) {
 	filename := fmt.Sprintf("sstable-%d", File_number)
-	file, err := os.OpenFile(filename, os.O_RDONLY|os.O_CREATE, 0644)
+	path := filepath.Join(dbname, "sstable", filename)
+	file, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
