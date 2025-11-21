@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Ankit-1204/FlintDB.git/internals/formats"
-	"github.com/Ankit-1204/FlintDB.git/internals/memtable"
+	"github.com/Ankit-1204/FlintDB/internals/formats"
+	"github.com/Ankit-1204/FlintDB/internals/memtable"
 )
 
 // both snaP and read need manifest for file read. files should be numbered sequentially. latest file number known how?

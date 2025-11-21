@@ -1,4 +1,4 @@
-module github.com/Ankit-1204/FlintDB.git
+module github.com/Ankit-1204/FlintDB
 
 go 1.25.0
 

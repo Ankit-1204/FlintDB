@@ -3,7 +3,7 @@ package memtable
 import (
 	"sync"
 
-	"github.com/Ankit-1204/FlintDB.git/internals/formats"
+	"github.com/Ankit-1204/FlintDB/internals/formats"
 )
 
 type Node struct {

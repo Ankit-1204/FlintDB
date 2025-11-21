@@ -10,10 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/Ankit-1204/FlintDB.git/internals/formats"
-	"github.com/Ankit-1204/FlintDB.git/internals/memtable"
-	"github.com/Ankit-1204/FlintDB.git/internals/sstable"
-	"github.com/Ankit-1204/FlintDB.git/internals/wal"
+	"github.com/Ankit-1204/FlintDB/internals/formats"
+	"github.com/Ankit-1204/FlintDB/internals/memtable"
+	"github.com/Ankit-1204/FlintDB/internals/sstable"
+	"github.com/Ankit-1204/FlintDB/internals/wal"
 )
 
 type Database struct {
@@ -48,7 +48,8 @@ func Open(dbName string) (*Database, error) {
 	appChannel := make(chan *formats.LogAppend, 10)
 	replayChan := make(chan []formats.LogAppend)
 	flushChan := make(chan *memtable.MemTable)
-	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, MaxMemSize: 32 * 1024 * 1024, nextFileNumber: 0}
+	compactionChan := make(chan bool, 1)
+	db := Database{dbName: dbName, table: table, wal: appChannel, replayChan: replayChan, flushChan: flushChan, compactionChan: compactionChan, MaxMemSize: 32 * 1024 * 1024, nextFileNumber: 0}
 	go wal.StartLog(appChannel, replayChan, dbName)
 
 	// Note to self: orphaned sstables not detected for calculating nextNum
@@ -57,6 +58,7 @@ func Open(dbName string) (*Database, error) {
 	}
 	db.replayCreate()
 	go db.flushQueue()
+	go db.compactionWorker()
 	return &db, nil
 
 }
@@ -171,6 +173,10 @@ func (db *Database) flushQueue() {
 		levelFiles = append(levelFiles, *file)
 		db.ssVersion.LevelMap[0] = levelFiles
 		db.ssMu.Unlock()
+		select {
+		case db.compactionChan <- true:
+		default:
+		}
 	}
 }
 
@@ -280,7 +286,6 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 			best = formats.DataBlock{Key: itItem.Key, Value: itItem.Value, Seq: itItem.Seq, Tombstone: itItem.Tombstone}
 		}
 
-		// advance the iterator that produced the heap item
 		srcIt := iterators[itItem.IteratorIndex]
 		if srcIt.Next() {
 			heap.Push(h, &formats.HeapItem{
@@ -360,13 +365,17 @@ func (db *Database) performCompaction(candidate *formats.CompactionCandidate) er
 	return nil
 }
 
-func (db *Database) compactionProcess() error {
-	cand := db.pickCandidate()
-	if cand != nil {
-		if err := db.performCompaction(cand); err != nil {
-			fmt.Println(err)
-			return err
+func (db *Database) compactionWorker() {
+	for range db.compactionChan {
+		for {
+			cand := db.pickCandidate()
+			if cand == nil {
+				break
+			}
+			if err := db.performCompaction(cand); err != nil {
+				fmt.Println("Compaction error:", err)
+				break
+			}
 		}
 	}
-	return nil
 }

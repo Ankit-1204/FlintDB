@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/Ankit-1204/FlintDB.git/internals"
+	"github.com/Ankit-1204/FlintDB/internals"
 )
 
 func main() {
